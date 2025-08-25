@@ -64,16 +64,41 @@ function authorizeRole(role) {
   };
 }
 
+/* ---------------- NEW FUNCTION ---------------- */
+// ✅ Check if an admin already exists
+async function adminExists() {
+  const snapshot = await db.collection("users").where("role", "==", "admin").get();
+  return !snapshot.empty; // true if an admin exists
+}
+
 /* ---------------- Routes ---------------- */
 
 // ✅ Create user with role (admin only)
 app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
     const { email, password, role } = req.body;
+
     if (!email || !password || !role) {
-      return res.status(400).json({ error: "Email, password and role are required" });
+      return res.status(400).json({ error: "Email, password, and role are required" });
     }
 
+    // 🚫 Block creating another admin if one already exists
+    if (role === "admin" && (await adminExists())) {
+      return res.status(403).json({ error: "Only one admin is allowed" });
+    }
+
+    let existingUser;
+    try {
+      existingUser = await admin.auth().getUserByEmail(email);
+    } catch (err) {
+      existingUser = null;
+    }
+
+    if (existingUser) {
+      return res.status(400).json({ error: "This email is already registered!" });
+    }
+
+    // ✅ Create new Firebase Auth user
     const userRecord = await admin.auth().createUser({
       email,
       password,
@@ -81,17 +106,26 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
       disabled: false,
     });
 
+    // ✅ Save user in Firestore
     await db.collection("users").doc(userRecord.uid).set({
-      email: email,
-      role: role,
+      email,
+      role,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    console.log(`🎉 User created: ${email} with role ${role}`);
-    res.json({ success: true, message: `User ${email} created successfully with role ${role}`, uid: userRecord.uid });
+    res.status(201).json({
+      success: true,
+      message: `✅ User ${email} created successfully`,
+      uid: userRecord.uid,
+    });
   } catch (err) {
-    console.error("❌ createUser error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
+    console.error("❌ Error creating user:", err.message);
+
+    if (err.code === "auth/email-already-exists") {
+      return res.status(400).json({ error: "This email is already registered!" });
+    }
+
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -101,6 +135,11 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
     const { uid, role } = req.body;
     if (!uid || !role) {
       return res.status(400).json({ error: "uid and role required" });
+    }
+
+    // 🚫 Prevent assigning "admin" role if one already exists
+    if (role === "admin" && (await adminExists())) {
+      return res.status(403).json({ error: "An admin already exists" });
     }
 
     await db.collection("users").doc(uid).update({ role });
