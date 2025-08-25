@@ -1,9 +1,11 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const bodyParser = require("body-parser");
+const morgan = require("morgan"); // ✅ Logging middleware
 
 const app = express();
 app.use(bodyParser.json());
+app.use(morgan("dev")); // ✅ Logs all incoming requests (method, path, status, response time)
 
 // ✅ Use the environment variable instead of JSON file
 const serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_KEY);
@@ -20,14 +22,16 @@ async function authenticate(req, res, next) {
   try {
     const idToken = req.headers.authorization?.split("Bearer ")[1];
     if (!idToken) {
+      console.warn("⚠️ No token provided");
       return res.status(401).json({ error: "No token provided" });
     }
 
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     req.user = decodedToken; // attach user info to request
+    console.log(`✅ Authenticated user: ${decodedToken.uid} (${decodedToken.email || "no email"})`);
     next();
   } catch (err) {
-    console.error("Auth error:", err);
+    console.error("❌ Auth error:", err.message);
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
@@ -37,12 +41,22 @@ function authorizeRole(role) {
   return async (req, res, next) => {
     try {
       const userDoc = await db.collection("users").doc(req.user.uid).get();
-      if (!userDoc.exists || userDoc.data().role !== role) {
+      if (!userDoc.exists) {
+        console.warn(`⚠️ User ${req.user.uid} not found in Firestore`);
         return res.status(403).json({ error: "Not authorized" });
       }
+
+      const userRole = userDoc.data().role;
+      console.log(`👤 User ${req.user.uid} has role: ${userRole}, required: ${role}`);
+
+      if (userRole !== role) {
+        console.warn(`🚫 Access denied for ${req.user.uid}, role mismatch`);
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
       next();
     } catch (err) {
-      console.error("Role check error:", err);
+      console.error("❌ Role check error:", err.message);
       return res.status(500).json({ error: "Server error" });
     }
   };
@@ -56,6 +70,7 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
     const { email, password, role } = req.body;
     
     if (!email || !password || !role) {
+      console.warn("⚠️ Missing email, password, or role");
       return res.status(400).json({ error: "Email, password and role are required" });
     }
 
@@ -74,13 +89,15 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
+    console.log(`🎉 User created: ${email} with role ${role}`);
+
     res.json({ 
       success: true, 
       message: `User ${email} created successfully with role ${role}`,
       uid: userRecord.uid 
     });
   } catch (err) {
-    console.error("createUser error:", err);
+    console.error("❌ createUser error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -90,13 +107,15 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
     const { uid, role } = req.body;
     if (!uid || !role) {
+      console.warn("⚠️ Missing uid or role in setRole");
       return res.status(400).json({ error: "uid and role required" });
     }
 
     await db.collection("users").doc(uid).update({ role });
+    console.log(`🔑 Role of ${uid} set to ${role}`);
     res.json({ success: true, message: `Role of ${uid} set to ${role}` });
   } catch (err) {
-    console.error("setRole error:", err);
+    console.error("❌ setRole error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -105,22 +124,28 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
 app.get("/profile", authenticate, async (req, res) => {
   try {
     const userDoc = await db.collection("users").doc(req.user.uid).get();
-    if (!userDoc.exists) return res.status(404).json({ error: "User not found" });
+    if (!userDoc.exists) {
+      console.warn(`⚠️ User ${req.user.uid} profile not found`);
+      return res.status(404).json({ error: "User not found" });
+    }
 
+    console.log(`📄 Profile accessed for ${req.user.uid}`);
     res.json({ uid: req.user.uid, ...userDoc.data() });
   } catch (err) {
-    console.error("profile error:", err);
+    console.error("❌ profile error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ✅ Teacher-only route
 app.get("/teacher/dashboard", authenticate, authorizeRole("teacher"), (req, res) => {
+  console.log(`👨‍🏫 Teacher dashboard accessed by ${req.user.uid}`);
   res.json({ success: true, message: "Welcome to Teacher Dashboard!" });
 });
 
 // ✅ Student-only route
 app.get("/student/dashboard", authenticate, authorizeRole("student"), (req, res) => {
+  console.log(`🎓 Student dashboard accessed by ${req.user.uid}`);
   res.json({ success: true, message: "Welcome to Student Dashboard!" });
 });
 
@@ -130,16 +155,18 @@ app.get("/checkAdmin", authenticate, async (req, res) => {
     const userDoc = await db.collection("users").doc(req.user.uid).get();
 
     if (!userDoc.exists || userDoc.data().role !== "admin") {
+      console.warn(`🚫 User ${req.user.uid} is not admin`);
       return res.status(403).json({ error: "Not authorized" });
     }
 
+    console.log(`✅ Admin verified: ${req.user.uid}`);
     res.json({ success: true, role: "admin" });
   } catch (err) {
-    console.error("checkAdmin error:", err);
+    console.error("❌ checkAdmin error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* ---------------- Start Server ---------------- */
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
