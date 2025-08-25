@@ -9,8 +9,8 @@ app.use(bodyParser.json());
 app.use(cors());
 app.use(morgan("dev"));
 
-// 🔹 Load Firebase Service Account
-const serviceAccount = require("./serviceAccountKey.json");
+// ✅ Use environment variable for Firebase service account
+const serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_KEY);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -18,51 +18,47 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-/* ---------------- Authentication Middleware ---------------- */
+/* ---------------- Middleware ---------------- */
+// ✅ Verify Firebase ID Token
 async function authenticate(req, res, next) {
   try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.log("⚠️ No token found in request");
-      return res.status(401).json({ error: "Missing token" });
+    const idToken = req.headers.authorization?.split("Bearer ")[1];
+    if (!idToken) {
+      console.warn("⚠️ No token provided");
+      return res.status(401).json({ error: "No token provided" });
     }
 
-    const token = authHeader.split("Bearer ")[1];
-    console.log(`🔑 Token received: ${token.substring(0, 20)}...`);
-
-    const decodedToken = await admin.auth().verifyIdToken(token);
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
     req.user = decodedToken;
-
-    console.log(`✅ Authenticated UID: ${decodedToken.uid}`);
+    console.log(`✅ Authenticated user: ${decodedToken.uid}`);
     next();
-  } catch (error) {
-    console.error("❌ AUTH ERROR:", error.message);
+  } catch (err) {
+    console.error("❌ Auth error:", err.message);
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
 
-/* ---------------- Role-based Authorization ---------------- */
+// ✅ Check role middleware
 function authorizeRole(role) {
   return async (req, res, next) => {
     try {
       const userDoc = await db.collection("users").doc(req.user.uid).get();
       if (!userDoc.exists) {
-        console.log(`⚠️ No user record found for ${req.user.uid}`);
-        return res.status(403).json({ error: "User not found" });
+        console.warn(`⚠️ User ${req.user.uid} not found in Firestore`);
+        return res.status(403).json({ error: "Not authorized" });
       }
 
       const userRole = userDoc.data().role;
-      console.log(`👤 UID: ${req.user.uid} | Role: ${userRole} | Required: ${role}`);
+      console.log(`👤 User ${req.user.uid} has role: ${userRole}`);
 
       if (userRole !== role) {
-        console.log(`🚫 Access denied for ${req.user.uid}`);
-        return res.status(403).json({ error: "Access denied" });
+        console.warn(`🚫 Access denied for ${req.user.uid}`);
+        return res.status(403).json({ error: "Not authorized" });
       }
 
       next();
     } catch (err) {
-      console.error("❌ ROLE ERROR:", err.message);
+      console.error("❌ Role check error:", err.message);
       return res.status(500).json({ error: "Server error" });
     }
   };
@@ -70,36 +66,75 @@ function authorizeRole(role) {
 
 /* ---------------- Routes ---------------- */
 
-// ✅ Debug endpoint → See your current user & role
-app.get("/debug", authenticate, async (req, res) => {
+// ✅ Create user with role (admin only)
+app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+    if (!email || !password || !role) {
+      return res.status(400).json({ error: "Email, password and role are required" });
+    }
+
+    const userRecord = await admin.auth().createUser({
+      email,
+      password,
+      emailVerified: false,
+      disabled: false,
+    });
+
+    await db.collection("users").doc(userRecord.uid).set({
+      email: email,
+      role: role,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log(`🎉 User created: ${email} with role ${role}`);
+    res.json({ success: true, message: `User ${email} created successfully with role ${role}`, uid: userRecord.uid });
+  } catch (err) {
+    console.error("❌ createUser error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ✅ Set user role (admin only)
+app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
+  try {
+    const { uid, role } = req.body;
+    if (!uid || !role) {
+      return res.status(400).json({ error: "uid and role required" });
+    }
+
+    await db.collection("users").doc(uid).update({ role });
+    console.log(`🔑 Role of ${uid} set to ${role}`);
+    res.json({ success: true, message: `Role of ${uid} set to ${role}` });
+  } catch (err) {
+    console.error("❌ setRole error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ✅ Get profile (authenticated users only)
+app.get("/profile", authenticate, async (req, res) => {
   try {
     const userDoc = await db.collection("users").doc(req.user.uid).get();
-    const userData = userDoc.exists ? userDoc.data() : null;
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
-    res.json({
-      uid: req.user.uid,
-      email: req.user.email,
-      firestore: userData,
-    });
+    res.json({ uid: req.user.uid, ...userDoc.data() });
   } catch (err) {
-    console.error("❌ DEBUG ERROR:", err.message);
+    console.error("❌ profile error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ✅ Protected admin route
-app.get("/admin/dashboard", authenticate, authorizeRole("admin"), (req, res) => {
-  res.json({ success: true, message: "Welcome Admin!" });
-});
-
-// ✅ Protected teacher route
+// ✅ Teacher dashboard (teacher only)
 app.get("/teacher/dashboard", authenticate, authorizeRole("teacher"), (req, res) => {
-  res.json({ success: true, message: "Welcome Teacher!" });
+  res.json({ success: true, message: "Welcome to Teacher Dashboard!" });
 });
 
-// ✅ Protected student route
+// ✅ Student dashboard (student only)
 app.get("/student/dashboard", authenticate, authorizeRole("student"), (req, res) => {
-  res.json({ success: true, message: "Welcome Student!" });
+  res.json({ success: true, message: "Welcome to Student Dashboard!" });
 });
 
 /* ---------------- Start Server ---------------- */
