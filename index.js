@@ -175,6 +175,29 @@ app.get("/checkAdmin", authenticate, async (req, res) => {
   }
 });
 
+// ✅ Get all users (admin only)
+app.get("/getUsers", authenticate, authorizeRole("admin"), async (req, res) => {
+  try {
+    const snapshot = await db.collection("users").orderBy("createdAt", "desc").get();
+
+    if (snapshot.empty) {
+      return res.json({ success: true, users: [] });
+    }
+
+    const users = snapshot.docs.map(doc => ({
+      uid: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt
+        ? doc.data().createdAt.toDate().toISOString()
+        : null
+    }));
+
+    res.json({ success: true, users });
+  } catch (err) {
+    console.error("❌ getUsers error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to fetch users" });
+  }
+});
 
 // ✅ Get profile (authenticated users only)
 app.get("/profile", authenticate, async (req, res) => {
