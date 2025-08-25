@@ -151,6 +151,31 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
   }
 });
 
+// ✅ Check if the logged-in user is the ONLY admin
+app.get("/checkAdmin", authenticate, async (req, res) => {
+  try {
+    const userDoc = await db.collection("users").doc(req.user.uid).get();
+
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "User not found" });
+    }
+
+    const userData = userDoc.data();
+
+    // ✅ Only allow access if the role is "admin"
+    if (userData.role !== "admin") {
+      console.warn(`🚫 Access denied for ${req.user.uid}`);
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    res.json({ success: true, message: "✅ Admin verified" });
+  } catch (err) {
+    console.error("❌ checkAdmin error:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
 // ✅ Get profile (authenticated users only)
 app.get("/profile", authenticate, async (req, res) => {
   try {
