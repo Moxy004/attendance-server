@@ -66,7 +66,7 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
   }
 });
 
-// ✅ Example protected route for all authenticated users
+// ✅ Profile (any authenticated user)
 app.get("/profile", authenticate, async (req, res) => {
   try {
     const userDoc = await db.collection("users").doc(req.user.uid).get();
@@ -79,14 +79,30 @@ app.get("/profile", authenticate, async (req, res) => {
   }
 });
 
-// ✅ Example teacher-only route
+// ✅ Teacher-only route
 app.get("/teacher/dashboard", authenticate, authorizeRole("teacher"), (req, res) => {
   res.json({ success: true, message: "Welcome to Teacher Dashboard!" });
 });
 
-// ✅ Example student-only route
+// ✅ Student-only route
 app.get("/student/dashboard", authenticate, authorizeRole("student"), (req, res) => {
   res.json({ success: true, message: "Welcome to Student Dashboard!" });
+});
+
+// ✅ NEW: Check admin (used by your frontend)
+app.get("/checkAdmin", authenticate, async (req, res) => {
+  try {
+    const userDoc = await db.collection("users").doc(req.user.uid).get();
+
+    if (!userDoc.exists || userDoc.data().role !== "admin") {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    res.json({ success: true, role: "admin" });
+  } catch (err) {
+    console.error("checkAdmin error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ---------------- Start Server ---------------- */
