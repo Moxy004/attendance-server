@@ -33,7 +33,7 @@ async function authenticate(req, res, next) {
 }
 
 // Check role of the authenticated user
-async function authorizeRole(role) {
+function authorizeRole(role) {
   return async (req, res, next) => {
     try {
       const userDoc = await db.collection("users").doc(req.user.uid).get();
