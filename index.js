@@ -50,6 +50,41 @@ function authorizeRole(role) {
 
 /* ---------------- Routes ---------------- */
 
+// ✅ NEW: Create user with role (admin only)
+app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+    
+    if (!email || !password || !role) {
+      return res.status(400).json({ error: "Email, password and role are required" });
+    }
+
+    // Create the user in Firebase Auth
+    const userRecord = await admin.auth().createUser({
+      email,
+      password,
+      emailVerified: false,
+      disabled: false
+    });
+
+    // Store user role in Firestore
+    await db.collection("users").doc(userRecord.uid).set({
+      email: email,
+      role: role,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    res.json({ 
+      success: true, 
+      message: `User ${email} created successfully with role ${role}`,
+      uid: userRecord.uid 
+    });
+  } catch (err) {
+    console.error("createUser error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ✅ Admin-only: Set role for another user
 app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
@@ -89,7 +124,7 @@ app.get("/student/dashboard", authenticate, authorizeRole("student"), (req, res)
   res.json({ success: true, message: "Welcome to Student Dashboard!" });
 });
 
-// ✅ NEW: Check admin (used by your frontend)
+// ✅ Check admin (used by your frontend)
 app.get("/checkAdmin", authenticate, async (req, res) => {
   try {
     const userDoc = await db.collection("users").doc(req.user.uid).get();
