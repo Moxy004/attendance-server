@@ -73,7 +73,7 @@ async function adminExists() {
 
 /* ---------------- Routes ---------------- */
 
-// ✅ Create user with name & role (admin only)
+// ✅ Create user with role & name (admin only)
 app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -102,13 +102,14 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
     const userRecord = await admin.auth().createUser({
       email,
       password,
+      displayName: name, // ✅ Store name in Firebase Auth
       emailVerified: false,
       disabled: false,
     });
 
-    // ✅ Save user in Firestore with name
+    // ✅ Save user in Firestore
     await db.collection("users").doc(userRecord.uid).set({
-      name,
+      name, // ✅ Store name in Firestore
       email,
       role,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -116,7 +117,7 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
 
     res.status(201).json({
       success: true,
-      message: `✅ User ${name} (${email}) created successfully`,
+      message: `✅ User ${email} created successfully`,
       uid: userRecord.uid,
     });
   } catch (err) {
@@ -152,6 +153,30 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
   }
 });
 
+// ✅ Check if the logged-in user is the ONLY admin
+app.get("/checkAdmin", authenticate, async (req, res) => {
+  try {
+    const userDoc = await db.collection("users").doc(req.user.uid).get();
+
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "User not found" });
+    }
+
+    const userData = userDoc.data();
+
+    // ✅ Only allow access if the role is "admin"
+    if (userData.role !== "admin") {
+      console.warn(`🚫 Access denied for ${req.user.uid}`);
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    res.json({ success: true, message: "✅ Admin verified" });
+  } catch (err) {
+    console.error("❌ checkAdmin error:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 // ✅ Get all users (admin only)
 app.get("/getUsers", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
@@ -166,7 +191,7 @@ app.get("/getUsers", authenticate, authorizeRole("admin"), async (req, res) => {
       ...doc.data(),
       createdAt: doc.data().createdAt
         ? doc.data().createdAt.toDate().toISOString()
-        : null,
+        : null
     }));
 
     res.json({ success: true, users });
