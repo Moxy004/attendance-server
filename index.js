@@ -73,13 +73,13 @@ async function adminExists() {
 
 /* ---------------- Routes ---------------- */
 
-// ✅ Create user with role (admin only)
+// ✅ Create user with name & role (admin only)
 app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const { name, email, password, role } = req.body;
 
-    if (!email || !password || !role) {
-      return res.status(400).json({ error: "Email, password, and role are required" });
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ error: "Name, email, password, and role are required" });
     }
 
     // 🚫 Block creating another admin if one already exists
@@ -106,8 +106,9 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
       disabled: false,
     });
 
-    // ✅ Save user in Firestore
+    // ✅ Save user in Firestore with name
     await db.collection("users").doc(userRecord.uid).set({
+      name,
       email,
       role,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -115,7 +116,7 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
 
     res.status(201).json({
       success: true,
-      message: `✅ User ${email} created successfully`,
+      message: `✅ User ${name} (${email}) created successfully`,
       uid: userRecord.uid,
     });
   } catch (err) {
@@ -151,30 +152,6 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
   }
 });
 
-// ✅ Check if the logged-in user is the ONLY admin
-app.get("/checkAdmin", authenticate, async (req, res) => {
-  try {
-    const userDoc = await db.collection("users").doc(req.user.uid).get();
-
-    if (!userDoc.exists) {
-      return res.status(403).json({ error: "User not found" });
-    }
-
-    const userData = userDoc.data();
-
-    // ✅ Only allow access if the role is "admin"
-    if (userData.role !== "admin") {
-      console.warn(`🚫 Access denied for ${req.user.uid}`);
-      return res.status(403).json({ error: "Not authorized" });
-    }
-
-    res.json({ success: true, message: "✅ Admin verified" });
-  } catch (err) {
-    console.error("❌ checkAdmin error:", err.message);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
-
 // ✅ Get all users (admin only)
 app.get("/getUsers", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
@@ -189,7 +166,7 @@ app.get("/getUsers", authenticate, authorizeRole("admin"), async (req, res) => {
       ...doc.data(),
       createdAt: doc.data().createdAt
         ? doc.data().createdAt.toDate().toISOString()
-        : null
+        : null,
     }));
 
     res.json({ success: true, users });
