@@ -152,20 +152,30 @@ app.get("/student/dashboard", authenticate, authorizeRole("student"), (req, res)
 // ✅ Check admin (used by your frontend)
 app.get("/checkAdmin", authenticate, async (req, res) => {
   try {
+    console.log(`🔍 Checking admin for UID: ${req.user.uid}`);
     const userDoc = await db.collection("users").doc(req.user.uid).get();
 
-    if (!userDoc.exists || userDoc.data().role !== "admin") {
-      console.warn(`🚫 User ${req.user.uid} is not admin`);
+    if (!userDoc.exists) {
+      console.warn(`⚠️ Firestore: No record for UID ${req.user.uid}`);
+      return res.status(403).json({ error: "User record missing" });
+    }
+
+    const role = userDoc.data().role;
+    console.log(`👤 Firestore role for ${req.user.uid}: ${role}`);
+
+    if (role !== "admin") {
+      console.warn(`🚫 ${req.user.uid} is not admin`);
       return res.status(403).json({ error: "Not authorized" });
     }
 
-    console.log(`✅ Admin verified: ${req.user.uid}`);
+    console.log(`✅ ${req.user.uid} verified as admin`);
     res.json({ success: true, role: "admin" });
   } catch (err) {
     console.error("❌ checkAdmin error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 /* ---------------- Start Server ---------------- */
 const PORT = process.env.PORT || 3000;
