@@ -64,16 +64,16 @@ function authorizeRole(role) {
   };
 }
 
-/* ---------------- NEW FUNCTION ---------------- */
+/* ---------------- Helper Functions ---------------- */
 // ✅ Check if an admin already exists
 async function adminExists() {
   const snapshot = await db.collection("users").where("role", "==", "admin").get();
-  return !snapshot.empty; // true if an admin exists
+  return !snapshot.empty;
 }
 
 /* ---------------- Routes ---------------- */
 
-// ✅ Create user with role & name (admin only)
+// ✅ Create user with role (admin only)
 app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -82,8 +82,10 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
       return res.status(400).json({ error: "Name, email, password, and role are required" });
     }
 
+    const normalizedRole = role.toLowerCase();
+
     // 🚫 Block creating another admin if one already exists
-    if (role === "admin" && (await adminExists())) {
+    if (normalizedRole === "admin" && (await adminExists())) {
       return res.status(403).json({ error: "Only one admin is allowed" });
     }
 
@@ -102,16 +104,15 @@ app.post("/createUser", authenticate, authorizeRole("admin"), async (req, res) =
     const userRecord = await admin.auth().createUser({
       email,
       password,
-      displayName: name, // ✅ Store name in Firebase Auth
       emailVerified: false,
       disabled: false,
     });
 
     // ✅ Save user in Firestore
     await db.collection("users").doc(userRecord.uid).set({
-      name, // ✅ Store name in Firestore
+      name,
       email,
-      role,
+      role: normalizedRole,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
@@ -139,14 +140,16 @@ app.post("/setRole", authenticate, authorizeRole("admin"), async (req, res) => {
       return res.status(400).json({ error: "uid and role required" });
     }
 
+    const normalizedRole = role.toLowerCase();
+
     // 🚫 Prevent assigning "admin" role if one already exists
-    if (role === "admin" && (await adminExists())) {
+    if (normalizedRole === "admin" && (await adminExists())) {
       return res.status(403).json({ error: "An admin already exists" });
     }
 
-    await db.collection("users").doc(uid).update({ role });
-    console.log(`🔑 Role of ${uid} set to ${role}`);
-    res.json({ success: true, message: `Role of ${uid} set to ${role}` });
+    await db.collection("users").doc(uid).update({ role: normalizedRole });
+    console.log(`🔑 Role of ${uid} set to ${normalizedRole}`);
+    res.json({ success: true, message: `Role of ${uid} set to ${normalizedRole}` });
   } catch (err) {
     console.error("❌ setRole error:", err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -181,49 +184,39 @@ app.get("/checkAdmin", authenticate, async (req, res) => {
 app.get("/getUsers", authenticate, authorizeRole("admin"), async (req, res) => {
   try {
     const snapshot = await db.collection("users").orderBy("createdAt", "desc").get();
-
-    if (snapshot.empty) {
-      return res.json({ success: true, users: [] });
-    }
-
     const users = snapshot.docs.map(doc => ({
-      uid: doc.id,
+      id: doc.id,
       ...doc.data(),
-      createdAt: doc.data().createdAt
-        ? doc.data().createdAt.toDate().toISOString()
-        : null
     }));
 
     res.json({ success: true, users });
   } catch (err) {
     console.error("❌ getUsers error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to fetch users" });
-  }
-});
-
-// ✅ Get profile (authenticated users only)
-app.get("/profile", authenticate, async (req, res) => {
-  try {
-    const userDoc = await db.collection("users").doc(req.user.uid).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json({ uid: req.user.uid, ...userDoc.data() });
-  } catch (err) {
-    console.error("❌ profile error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ✅ Teacher dashboard (teacher only)
-app.get("/teacher/dashboard", authenticate, authorizeRole("teacher"), (req, res) => {
-  res.json({ success: true, message: "Welcome to Teacher Dashboard!" });
-});
+// ✅ Fix missing roles for old users (optional)
+app.get("/fixRoles", async (req, res) => {
+  try {
+    const snapshot = await db.collection("users").get();
+    const updates = [];
 
-// ✅ Student dashboard (student only)
-app.get("/student/dashboard", authenticate, authorizeRole("student"), (req, res) => {
-  res.json({ success: true, message: "Welcome to Student Dashboard!" });
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (!data.role) {
+        updates.push(
+          db.collection("users").doc(doc.id).update({ role: "student" })
+        );
+      }
+    });
+
+    await Promise.all(updates);
+    res.json({ success: true, message: "✅ Fixed missing roles" });
+  } catch (err) {
+    console.error("❌ fixRoles error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 /* ---------------- Start Server ---------------- */
